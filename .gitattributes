@@ -1,0 +1,3 @@
+# todo: write a better comment to explain why these are needed
+generated/** linguist-generated
+generated/** -diff

@@ -1,0 +1,88 @@
+name: Deploy
+
+# Only deploy when changes land on main (i.e. on merge).
+on:
+  workflow_dispatch: # todo: automatic deployment on merge to main is disabled since this is a proof-of-concept repository
+  # push:
+  #   branches: [main]
+
+# Serialize deploys on main; never cancel an in-flight deploy.
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+permissions:
+  id-token: write # for aws-actions/configure-aws-credentials (OIDC)
+  contents: read
+
+env:
+  AWS_REGION: eu-north-1
+  STAGE: prod
+
+jobs:
+  detect:
+    name: Detect changed stacks
+    runs-on: ubuntu-latest
+    outputs:
+      waves: ${{ steps.detect.outputs.waves }}
+      count: ${{ steps.detect.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need history to diff against the previous commit
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - id: detect
+        run: pnpm exec tsx scripts/changed-stacks.ts
+        env:
+          BASE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+
+  deploy:
+    name: Deploy changed stacks
+    needs: detect
+    if: needs.detect.outputs.count > 0
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Deploy wave by wave (producers before consumers). Stacks within a wave
+      # run in parallel; each is deployed with `--exclusively` so an unchanged
+      # producer is never pulled in. If any stack in a wave fails, the whole
+      # wave finishes but later (dependent) waves are skipped.
+      - name: Deploy in dependency order
+        env:
+          WAVES: ${{ needs.detect.outputs.waves }}
+        run: |
+          set -euo pipefail
+          echo "$WAVES" | jq -c '.[]' | while read -r wave; do
+            echo "::group::Deploying wave: $wave"
+            echo "$wave" | jq -r '.[]' | xargs -P 4 -I{} \
+              pnpm exec cdk deploy {} \
+                --exclusively \
+                --require-approval never \
+                --context stage="${STAGE}"
+            echo "::endgroup::"
+          done

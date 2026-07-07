@@ -1,0 +1,57 @@
+name: Validate
+
+# Fast checks on every PR. This never deploys – deploys only happen on merge
+# to main (see deploy.yml).
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  STAGE: staging
+
+jobs:
+  validate:
+    name: Lint, type-check & synth
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need history to diff against the PR base
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Lint and type-check stay global: `tsc` gives whole-repo (incl.
+      # cross-stack) type safety and is cheap, regardless of what synthesizes.
+      - run: pnpm lint
+
+      - run: pnpm ts-check
+
+      # Same change detection as the deploy pipeline. A change to a shared path
+      # escalates to "all stacks", so this only skips stacks that are genuinely
+      # unaffected (and therefore already synthesize identically to main).
+      - id: detect
+        run: pnpm exec tsx scripts/changed-stacks.ts
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+
+      # Synthesize only the changed stacks to catch template errors before merge.
+      - name: Synth changed stacks
+        if: steps.detect.outputs.count > 0
+        env:
+          WAVES: ${{ steps.detect.outputs.waves }}
+        run: |
+          set -euo pipefail
+          STACKS=$(echo "$WAVES" | jq -r 'flatten | join(",")')
+          echo "Synthesizing: $STACKS"
+          pnpm exec cdk synth --context stage="${STAGE}" -c stacks="$STACKS" --quiet

@@ -1,0 +1,100 @@
+name: Manual deploy
+
+# Manually deploy one or more stacks from the Actions tab.
+on:
+  workflow_dispatch:
+    inputs:
+      stacks:
+        description: >-
+          Stacks to deploy: a space-separated list of stack ids
+          (e.g. "StorageStack CloudStack"), or "all" for every stack.
+        type: string
+        required: true
+        default: all
+      stage:
+        description: Deployment stage.
+        type: choice
+        required: true
+        default: staging
+        options:
+          - staging
+          - prod
+
+# Serialize with the automatic deploy on the same stage.
+concurrency:
+  group: deploy-${{ inputs.stage }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write # for aws-actions/configure-aws-credentials (OIDC)
+  contents: read
+
+env:
+  AWS_REGION: eu-north-1
+
+jobs:
+  resolve:
+    name: Resolve stacks
+    runs-on: ubuntu-latest
+    outputs:
+      waves: ${{ steps.resolve.outputs.waves }}
+      count: ${{ steps.resolve.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Validate the requested ids and order them into dependency waves,
+      # reusing the same logic as the automatic pipeline.
+      - id: resolve
+        run: pnpm exec tsx scripts/resolve-stacks.ts
+        env:
+          STACKS: ${{ inputs.stacks }}
+
+  deploy:
+    name: Deploy selected stacks
+    needs: resolve
+    if: needs.resolve.outputs.count > 0
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Same wave-based rollout as the automatic pipeline: parallel within a
+      # wave, ordered across waves, each stack deployed with `--exclusively`.
+      - name: Deploy in dependency order
+        env:
+          WAVES: ${{ needs.resolve.outputs.waves }}
+          STAGE: ${{ inputs.stage }}
+        run: |
+          set -euo pipefail
+          echo "$WAVES" | jq -c '.[]' | while read -r wave; do
+            echo "::group::Deploying wave: $wave"
+            echo "$wave" | jq -r '.[]' | xargs -P 4 -I{} \
+              pnpm exec cdk deploy {} \
+                --exclusively \
+                --require-approval never \
+                --context stage="${STAGE}" \
+                --context stacks={}
+            echo "::endgroup::"
+          done

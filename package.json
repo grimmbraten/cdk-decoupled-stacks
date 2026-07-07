@@ -1,0 +1,29 @@
+{
+	"name": "cdk-decoupled-stacks",
+	"description": "Example CDK project: deploy only changed stacks on merge, with loosely-coupled cross-stack references",
+	"type": "module",
+	"scripts": {
+		"build": "cdk synth --context stage=staging --quiet --validation",
+		"lint": "biome lint",
+		"ts-check": "tsc --noEmit",
+		"test": "echo \"No tests specified\" && exit 0",
+		"cdk:deploy": "tsx scripts/deploy.ts"
+	},
+	"packageManager": "pnpm@11.10.0",
+	"devDependencies": {
+		"@biomejs/biome": "2.5.2",
+		"@inquirer/prompts": "^8.5.2",
+		"@types/aws-lambda": "8.10.162",
+		"@types/node": "26.1.0",
+		"aws-cdk": "2.1129.0",
+		"aws-cdk-lib": "2.261.0",
+		"constructs": "10.6.0",
+		"esbuild": "0.28.1",
+		"tsx": "4.23.0",
+		"typescript": "6.0.3"
+	},
+	"dependencies": {
+		"@aws-sdk/client-dynamodb": "3.1080.0",
+		"@aws-sdk/lib-dynamodb": "3.1080.0"
+	}
+}

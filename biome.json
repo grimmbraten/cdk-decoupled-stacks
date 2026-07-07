@@ -1,0 +1,88 @@
+{
+	"$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+	"vcs": {
+		"enabled": false,
+		"clientKind": "git",
+		"useIgnoreFile": false
+	},
+	"files": {
+		"ignoreUnknown": false,
+		"includes": [
+			"**",
+			"!**/cdk.out",
+			"!**/node_modules",
+			"!**/.vscode"
+		]
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab"
+	},
+	"assist": {
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
+	},
+	"linter": {
+		"rules": {
+			"style": {
+				"useBlockStatements": {
+					"fix": "safe",
+					"level": "error",
+					"options": {}
+				},
+				"noParameterAssign": "error",
+				"useAsConstAssertion": "error",
+				"useDefaultParameterLast": "error",
+				"noUnusedTemplateLiteral": "error",
+				"noUselessElse": "error",
+				"noNonNullAssertion": "warn",
+				"noRestrictedImports": {
+					"level": "error",
+					"options": {
+						"paths": {
+							"aws-cdk-lib": {
+								"importNames": [
+									"CfnOutput",
+									"Fn"
+								],
+								"message": "Do not use CfnOutput or Fn.importValue — these create hard CloudFormation dependencies that prevent independent deploys and block producers from being destroyed while a consumer exists. Use publish() / importCrossStackValue() from constructs/cross-stack.ts instead: they route values through SSM, enforce the cross-stack contract at compile time, and keep stacks fully decoupled."
+							}
+						}
+					}
+				}
+			},
+			"correctness": {
+				"noUnusedImports": {
+					"fix": "safe",
+					"level": "error",
+					"options": {}
+				}
+			},
+			"nursery": {
+				"noFloatingPromises": "error"
+			}
+		}
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "single"
+		}
+	},
+	"overrides": [
+		{
+			"includes": [
+				"constructs/cross-stack.ts"
+			],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": "off"
+					}
+				}
+			}
+		}
+	]
+}
