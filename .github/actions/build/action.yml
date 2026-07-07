@@ -1,0 +1,53 @@
+name: Build generated artifacts
+description: Restore or build generated artifacts for selected stacks and source areas
+
+inputs:
+  stacks:
+    description: JSON array of selected stack ids
+    required: true
+  stage:
+    description: Build stage exposed to build hooks as BUILD_STAGE
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # Keep this target list in sync with the cache/build blocks below. The
+    # checker warns when a new custom scripts/build.ts hook is not listed.
+    - name: Check custom build hook coverage
+      shell: bash
+      run: pnpm exec tsx scripts/check-build-action.ts ProducerStack
+
+    # Each target owns its cache path and key inputs. Add root source-area and
+    # stack blocks here as their generators are introduced; never hash outputs.
+    # Exact keys are intentional: a miss should build fresh artifacts. Do not
+    # add restore-keys unless the generator supports incremental builds, cleans
+    # stale outputs, and still runs after a partial cache match.
+    - name: Restore ProducerStack generated artifacts
+      id: producer-cache
+      if: contains(fromJSON(inputs.stacks), 'ProducerStack')
+      uses: actions/cache@v4
+      with:
+        path: stacks/producer/generated/
+        # All callers use Ubuntu and these artifacts are portable. Prefix with
+        # runner.os if that changes. Add/bump a version token when output format
+        # changes cannot be represented by the hashed inputs.
+        key: >-
+          ProducerStackArtifacts-${{
+          hashFiles(
+            'package.json',
+            'pnpm-lock.yaml',
+            'stacks/producer/stack.ts',
+            'stacks/producer/lambdas/**',
+            'stacks/producer/scripts/**'
+          )
+          }}
+
+    - name: Build ProducerStack artifacts
+      if: >-
+        contains(fromJSON(inputs.stacks), 'ProducerStack') &&
+        steps.producer-cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        BUILD_STAGE: ${{ inputs.stage }}
+      run: pnpm build ProducerStack

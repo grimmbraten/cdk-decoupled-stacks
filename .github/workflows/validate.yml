@@ -1,0 +1,72 @@
+name: Validate
+
+# Fast checks on every PR. This never deploys – deploys only happen on merge
+# to main (see deploy.yml).
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  STAGE: staging
+
+jobs:
+  validate:
+    name: Lint, type-check & synth
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need history to diff against the PR base
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Same change detection as the deploy pipeline. A change to a shared path
+      # escalates to "all stacks", so this only skips stacks that are genuinely
+      # unaffected (and therefore already synthesize identically to main).
+      - id: detect
+        run: pnpm exec tsx scripts/changed-stacks.ts
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+
+      - name: Build changed source and stack artifacts
+        if: steps.detect.outputs.count > 0
+        uses: ./.github/actions/build
+        with:
+          stacks: ${{ steps.detect.outputs.stacks }}
+          stage: ${{ env.STAGE }}
+
+      # Generate schema-derived TypeScript before whole-repo lint and type checks.
+      - run: pnpm lint
+
+      - run: pnpm ts-check
+
+      - name: Test changed stacks
+        if: steps.detect.outputs.count > 0
+        env:
+          STACKS: ${{ steps.detect.outputs.stacks }}
+        run: |
+          set -euo pipefail
+          mapfile -t STACK_IDS < <(echo "$STACKS" | jq -r '.[]')
+          pnpm test "${STACK_IDS[@]}"
+
+      # Synthesize only the changed stacks to catch template errors before merge.
+      - name: Synth changed stacks
+        if: steps.detect.outputs.count > 0
+        env:
+          GROUPS: ${{ steps.detect.outputs.groups }}
+        run: |
+          set -euo pipefail
+          STACKS=$(echo "$GROUPS" | jq -r 'flatten | join(",")')
+          echo "Synthesizing: $STACKS"
+          pnpm exec cdk synth --context stage="${STAGE}" -c stacks="$STACKS" --quiet
